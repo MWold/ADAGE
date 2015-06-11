@@ -11,8 +11,10 @@ Ada::Application.routes.draw do
   resources :groups do
     member do
       put :add_user
+      delete :remove_user
     end
   end
+
 
   match "save_game" => "save#save", :via => :post
   match "load_game" => "save#load", :via => :get
@@ -20,7 +22,6 @@ Ada::Application.routes.draw do
   match "save_config" => "config#save", :via => :post
   match "load_config" => "config#load", :via => :get
   match "show_config" => "config#show", :via => :get
-
 
   match "game_version_data/save" => 'gv#save', :via => :post
   match "game_version_data/delete" => 'gv#delete', :via => :post
@@ -38,10 +39,15 @@ Ada::Application.routes.draw do
       get :sessions
       get :contexts
       get :developer_tools
+      get :logger
       get :researcher_tools
+      get :sync_time
+      delete :clear_data
     end
   end
+
   resources :implementations
+
   resources :data do
     collection do
       get :find_tenacity_player
@@ -64,19 +70,37 @@ Ada::Application.routes.draw do
     end
   end
 
+  namespace :stats do
+    post :save_stat
+    post :save_stats
+    get :get_stat
+    get :get_stats
+    delete :clear_stats
+  end
+
+  namespace :achievements do
+    post :save_achievement
+    get :get_achievement
+    get :get_achievements
+  end
+
   resources :users do
     collection do
       get :new_sequence
       post :create_sequence
       post :find
+      post :generate_guest
       get :admin
+      get :guests
       get :reset_password_form
       put :reset_password
       get :teacher_requests
     end
+
     member do
       get :data_by_game
       get :stats
+      get :groups
       get :session_logs
       get :context_logs
       get :get_key_values

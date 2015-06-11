@@ -54,30 +54,46 @@ class DataController < ApplicationController
 
   def get_sorted_and_limited_events
 
-
     if params[:app_token] != nil
       client = Client.where(app_token: params[:app_token]).first
     end
 
-
     if client != nil
-
-      since = time_range_to_epoch(params[:time_range])
       game_name = client.implementation.game.name
 
-      if params[:user_id].nil? or params[:user_id].empty?
-        @data = AdaData.with_game(game_name).where(:timestamp.gt => since).where(key: params[:key]).desc(params[:field_name]).skip(params[:start]).limit(params[:limit])
+      unless params[:time_range].nil?
+        since = time_range_to_epoch(params[:time_range])
+
+        if params[:user_id].nil? or params[:user_id].empty?
+          @data = AdaData.with_game(game_name).where(:timestamp.gt => since).where(key: params[:key]).desc(params[:field_name]).skip(params[:start]).limit(params[:limit])
+        else
+          @data = AdaData.with_game(game_name).where(:timestamp.gt => since).where(key: params[:key]).where(user_id: params[:user_id]).desc(params[:field_name]).skip(params[:start]).limit(params[:limit])
+        end
       else
-        @data = AdaData.with_game(game_name).where(:timestamp.gt => since).where(key: params[:key]).where(user_id: params[:user_id]).desc(params[:field_name]).skip(params[:start]).limit(params[:limit])
+        @data  = AdaData.with_game(game_name).all.desc('_id')
+        unless params[:key].nil?
+          @data = @data.where(key: params[:key])
+        end
+
+        unless params[:user_id].nil?
+          @data = @data.where(user_id: params[:user_id])
+        end
+        
+        @data.limit(params[:limit])
       end
     end
 
 
     @result = Hash.new
     @result['data'] = @data
-    respond_with @result
 
-
+    respond_to do |format|
+      if params[:callback]
+        format.json { render json: @result.to_json, callback: params[:callback] }
+      else
+        format.json { render  json: @result.to_json}
+      end
+    end
   end
 
 
@@ -179,7 +195,6 @@ class DataController < ApplicationController
 
   def data_selection
 
-
     if params[:graph_params] != nil
       @graph_params = GraphParams.new(params[:graph_params])
     else
@@ -190,7 +205,6 @@ class DataController < ApplicationController
       client = Client.where(app_token: params[:app_token]).first
       @graph_params.app_token = params[:app_token]
     else
-      puts @graph_params.app_token
       client = Client.where(app_token: @graph_params.app_token).first
     end
 
@@ -198,17 +212,13 @@ class DataController < ApplicationController
     @fields = Array.new
     if client != nil
 
-
       @game = client.implementation.game
-
       @keys = AdaData.with_game(@game.name).distinct(:key)
 
       if @graph_params.key != nil
         @fields = AdaData.with_game(@game.name).where(key: @graph_params.key).first.attributes.keys
       end
-
     end
-
 
   end
 
@@ -308,8 +318,6 @@ class DataController < ApplicationController
       end
 
 
-      puts 'count ' + logs.count.to_s
-
       @data_group = DataGroup.new
       logs.each do |l|
         @user = User.find(l["_id"].to_i)
@@ -339,13 +347,9 @@ class DataController < ApplicationController
         format.html {render}
         format.csv { send_data @data_group.to_csv, filename: client.implementation.game.name+"_"+current_user.player_name+".csv" }
       end
-
-
     else
       puts "CLIENT NOT FOUND!"
     end
-
-
 
   end
 
@@ -412,8 +416,6 @@ class DataController < ApplicationController
     end
 
     logs = AdaData.with_game(@game.name).order_by(:timestamp.asc).in(user_id: @user_ids).only(:timestamp,:user_id,:session_token).map_reduce(map,reduce).out(inline:1)
-
-    puts logs.count
 
     sessions_played = 0
     total_session_length = 0
@@ -653,16 +655,25 @@ class DataController < ApplicationController
     @user_ids = params[:user_ids]
     respond_to do |format|
       format.csv {
-        out = CSV.generate do |csv|
+        type = "text/csv"
+
+        filename = @game.name+'_'+ params[:version]+'.csv'
+        set_file_headers(filename,type)
+        set_streaming_headers
+        response.status = 200
+
+        @user_ids = @user_ids.distinct(:user_id)
+        self.response_body = Enumerator.new do |y|
+          i=0
           @user_ids.each do |id|
-            user = User.find(id)
-            if user.present?
-              user.data_to_csv(csv, @game.name, params[:version])
+            user = User.where(id: id).first
+            unless user.nil?
+              user.data_to_csv(@game.name, params[:version])
             end
+            i+=1
+            GC.start if i%500==0
           end
         end
-
-        send_data out, filename: @game.name+'_'+ params[:version]+'.csv'
       }
       format.json {
         data = AdaData.with_game(params[:gameName]).where(schema: params[:version]).in(user_id: params[:user_ids] )
@@ -671,34 +682,166 @@ class DataController < ApplicationController
     end
   end
 
+  def set_file_headers(filename,type)
+    headers["Content-Type"] = type
+    headers["Content-disposition"] = "attachment; filename='#{filename}'"
+  end
+
+  def set_streaming_headers
+    headers['X-Accel-Buffering'] = 'no'
+    headers["Cache-Control"] ||= "no-cache"
+    headers.delete("Content-Length")
+    headers['Last-Modified'] = Time.now.ctime.to_s
+  end
+
+  def attributes(gameName,schema="")
+    keys = Hash.new
+    data = nil
+    if schema.present?
+      data =  AdaData.with_game(@game.name).where(schema: schema).limit(3000)
+    else
+      data = AdaData.with_game(@game.name).limit(3000)
+    end
+
+    types = data.distinct(:key)
+    examples = Array.new
+    types.each do |type|
+      ex = data.select{ |d| d.key.include?(type)}.last
+      if ex != nil
+        examples << ex
+      end
+    end
+    all_attrs = Array.new
+    examples.each do |e|
+      e.attributes.keys.each do |k|
+        unless all_attrs.include? k
+          all_attrs << k
+        end
+      end
+    end  
+
+    return all_attrs
+  end
+
   def export
     @game = Game.where('lower(name) = ?', params[:gameName].downcase).first
     authorize! :read, @game
     @user_ids = params[:user_ids]
 
+    if params[:start]
+      params[:start] = (Time.at((params[:start].to_i)/1000+86400).to_time.to_i*1000).to_i
+    end
+    if params[:end]
+      params[:end] = (Time.at((params[:end].to_i)/1000+86400).to_time.to_i*1000).to_i
+    end
+
     respond_to do |format|
       format.csv {
-        @user_ids = AdaData.with_game(@game.name).distinct(:user_id)
 
-        out = CSV.generate do |csv|
-          @user_ids.each do |id|
-            user = User.find(id)
-            if user.present?
-              user.data_to_csv(csv, @game.name)
-            end
-          end
+        #Pre Query all the data attributes
+        all_attrs = attributes(@game.name)
+
+        filename = @game.name+'.csv'
+
+        unless  @user_ids.nil?
+          data = AdaData.with_game(@game.name).in(user_id: @user_ids)
+        else
+          data = AdaData.with_game(@game.name)
         end
 
-        send_data out, filename: @game.name+'.csv'
+        if params[:end] and params[:start]
+          start_date =  Time.at(params[:start].to_i/1000).to_time.strftime("%-m_%-d_%Y")
+          end_date=  Time.at(params[:end].to_i/1000).to_time.strftime("%-m_%-d_%Y")
+          filename = @game.name+"_"+start_date+"-"+end_date+'.csv'
+
+          data = data.where(:timestamp.gte=> params[:start]).where(:timestamp.lte=> params[:end])
+        elsif params[:start]
+          data = data.where(:timestamp.gte=> params[:start])
+        elsif params[:end]
+          data = data.where(:timestamp.lte=> params[:end])
+        end
+
+        type = "text/csv"
+
+        set_file_headers(filename,type)
+        set_streaming_headers
+        response.status = 200
+
+        self.response_body = Enumerator.new do |y|
+          y << CSV.generate_line(["player", "epoch time"] + all_attrs)
+          user_id = -1
+          player_name = ""
+        
+          i=0
+          data.each do |entry|
+            if user_id != entry.user_id
+              user_id = entry.user_id
+              user = User.find(user_id)
+              player_name = user.player_name
+            end
+
+            out = Array.new
+            out << player_name
+            if entry.respond_to?('timestamp')
+              if entry.timestamp.to_s.include?(':')
+                out << DateTime.strptime(entry.timestamp.to_s, "%m/%d/%Y %H:%M:%S").to_time.to_i
+              else
+                out << entry.timestamp
+              end
+            else
+              out << 'no timestamp'
+            end
+
+            all_attrs.each do |attr|
+              if entry.attributes.keys.include?(attr)
+                out << entry.attributes[attr]
+              else
+                out << ""
+              end
+            end
+            y << CSV.generate_line(out)
+            i+=1
+            GC.start if i%5000==0
+          end 
+        end
       }
       format.json {
         unless  @user_ids.nil?
           data = AdaData.with_game(@game.name).in(user_id: @user_ids)
         else
-          data = AdaData.with_game(@game.name).all
+          data = AdaData.with_game(@game.name)
         end
 
-        send_data data.to_json, filename: @game.name+'.json'
+        if params[:start]
+          data = data.where(:timestamp.gte=> params[:start])
+        end
+
+        if params[:end]
+          data = data.where(:timestamp.lte=>params[:end])
+        end
+
+        filename = @game.name+'.json'
+
+        if params[:end] and params[:start]
+          start_date =  Time.at(params[:start].to_i/1000).to_time.strftime("%-m_%-d_%Y")
+          end_date=  Time.at(params[:end].to_i/1000).to_time.strftime("%-m_%-d_%Y")
+          filename = @game.name+"_"+start_date+"-"+end_date+'.json'
+        end
+
+        type = "text/json"
+
+        set_file_headers(filename,type)
+        set_streaming_headers
+        response.status = 200
+
+        self.response_body = Enumerator.new do |y|
+          i=0
+          data.all.each do |log|
+            y << log.to_json + "\n"
+            i+=1
+            GC.start if i%5000==0
+          end
+        end
       }
     end
   end
@@ -710,7 +853,6 @@ class DataController < ApplicationController
   end
 
   def create
-
     @data = []
     error = false
     if params[:data]
@@ -737,6 +879,4 @@ class DataController < ApplicationController
       format.all { redirect_to :root, :status => status}
     end
   end
-
-
 end

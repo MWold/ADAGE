@@ -12,9 +12,9 @@ class ApplicationController < ActionController::Base
     new_user_session_path
   end
 
-  def qrcode(text="",width=128,height=128)
+  def qrcode(text="",width=200,height=200)
     #helper to generate a qr code with adaptive resizing to compensate for data size
-    size = 2
+    size = 1
     qr = nil
     while qr.nil?
       begin
@@ -67,7 +67,7 @@ class ApplicationController < ActionController::Base
   end
 
   def time_range_to_bin(time_range)
-    
+
     if time_range.include?("day")
       since = 1.day
     end
@@ -83,7 +83,7 @@ class ApplicationController < ActionController::Base
     if time_range.include?("hour")
       since = 1.hour
     end
-    
+
     if time_range.include?("all")
       since = 1.year
     end
@@ -91,11 +91,11 @@ class ApplicationController < ActionController::Base
     #convert to milliseconds and return
     return since * 1000
 
-  
+
   end
 
   def get_client_by_token token
-    
+
     if token != nil
       client = Client.where(app_token: token).first
     end
@@ -111,13 +111,13 @@ class ApplicationController < ActionController::Base
 
   #called recursively to collect all the graphable numeric field names
   def add_field_names depth, attributes, field_hash, filter_hash
-   
+
     if field_hash[depth] == nil
       field_hash[depth] = Array.new
     end
 
     attributes.each do |key, value|
-    
+
       if value.is_a? Hash
         if filter_hash[depth] != nil and filter_hash[depth].include?(key)
           field_hash = add_field_names(depth+1, value, field_hash, filter_hash)
@@ -129,14 +129,23 @@ class ApplicationController < ActionController::Base
       end
 
     end
-    
+
     return field_hash
 
 
   end
 
-  
-  
+  def authenticate_app_token
+    if params[:app_token]
+      client = Client.where(app_token: params[:app_token]).first
+      if client.nil?
+        render :json => {:errors => ["Invalid Application Token"] }, status: :unauthorized
+      end
+    else
+      render :json => {:errors => ["Invalid Application Token"] }, status: :unauthorized
+    end
+  end
+
   protected
 
   def oauth_access_token
@@ -154,12 +163,8 @@ class ApplicationController < ActionController::Base
       end
     end
 
-
     if access_token != nil
       sign_in access_token.user
     end
-
   end
-
-   
 end

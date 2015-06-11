@@ -14,11 +14,13 @@ gem 'cancan'
 gem 'omniauth'
 #gem 'rickshaw_rails'
 gem 'chart-js-rails'
+gem 'bootstrap-datepicker-rails'
 gem 'omniauth-facebook'
 gem "omniauth-google-oauth2"
 gem 'simple_form'
 gem 'schema_plus'
 gem 'json-schema-generator'
+gem 'activerecord-postgres-hstore'
 
 gem 'httparty'
 gem 'pacecar'
@@ -46,7 +48,7 @@ group :test, :development do
   gem 'colored'
 
   gem 'cucumber-rails'
-  gem 'rspec-rails'
+  gem 'rspec-rails', '2.7.0'
   gem 'fabrication'
   gem 'pry'
   gem 'pry-rails'
